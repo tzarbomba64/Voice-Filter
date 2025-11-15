@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="UTF-8">
-<title>Distant Voice Recorder</title>
+<title>Distant Voice Recorder (iOS Compatible)</title>
 </head>
 <body>
 <h2>Record Your Voice (Distant Effect)</h2>
@@ -23,7 +23,14 @@ const stopBtn = document.getElementById("stopBtn");
 const audioPlayback = document.getElementById("audioPlayback");
 const downloadLink = document.getElementById("downloadLink");
 
+// Use webkitAudioContext for iOS Safari compatibility
+const AudioCtx = window.AudioContext || window.webkitAudioContext;
+
 startBtn.onclick = async () => {
+    // Resume AudioContext on user gesture
+    if (!audioContext) audioContext = new AudioCtx();
+    if (audioContext.state === 'suspended') await audioContext.resume();
+
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     mediaRecorder = new MediaRecorder(stream);
     audioChunks = [];
@@ -35,9 +42,8 @@ startBtn.onclick = async () => {
 
 stopBtn.onclick = async () => {
     mediaRecorder.onstop = async () => {
-        const blob = new Blob(audioChunks, { type: 'audio/webm' });
+        const blob = new Blob(audioChunks, { type: 'audio/mp4' }); // iOS prefers mp4/m4a
         const arrayBuffer = await blob.arrayBuffer();
-        audioContext = new (window.AudioContext || window.webkitAudioContext)();
         const buffer = await audioContext.decodeAudioData(arrayBuffer);
         const processedBuffer = applyDistantEffect(buffer);
 
@@ -64,20 +70,10 @@ function applyDistantEffect(buffer) {
         const output = newBuffer.getChannelData(c);
 
         for (let i = 0; i < length; i++) {
-            // Slight garble / distortion
-            let sample = Math.tanh(input[i] * 2) * 0.5;
-
-            // Add echo
+            let sample = Math.tanh(input[i] * 2) * 0.5; // distortion
             const delaySamples = Math.floor(0.2 * sampleRate);
-            if (i >= delaySamples) {
-                sample += output[i - delaySamples] * 0.4;
-            }
-
-            // Simple low-pass (muffle)
-            if (i > 0) {
-                sample = 0.7 * sample + 0.3 * output[i - 1];
-            }
-
+            if (i >= delaySamples) sample += output[i - delaySamples] * 0.4; // echo
+            if (i > 0) sample = 0.7 * sample + 0.3 * output[i - 1]; // low-pass
             output[i] = sample;
         }
 
@@ -96,9 +92,7 @@ function bufferToWav(buffer) {
     const view = new DataView(arrayBuffer);
 
     function writeString(view, offset, string) {
-        for (let i = 0; i < string.length; i++) {
-            view.setUint8(offset + i, string.charCodeAt(i));
-        }
+        for (let i = 0; i < string.length; i++) view.setUint8(offset + i, string.charCodeAt(i));
     }
 
     let offset = 0;
@@ -106,8 +100,8 @@ function bufferToWav(buffer) {
     view.setUint32(offset, 36 + length, true); offset += 4;
     writeString(view, offset, 'WAVE'); offset += 4;
     writeString(view, offset, 'fmt '); offset += 4;
-    view.setUint32(offset, 16, true); offset += 4; // PCM
-    view.setUint16(offset, 1, true); offset += 2; // PCM format
+    view.setUint32(offset, 16, true); offset += 4;
+    view.setUint16(offset, 1, true); offset += 2;
     view.setUint16(offset, numChannels, true); offset += 2;
     view.setUint32(offset, buffer.sampleRate, true); offset += 4;
     view.setUint32(offset, buffer.sampleRate * numChannels * 2, true); offset += 4;
