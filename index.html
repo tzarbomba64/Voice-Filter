@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Distant Voice Recorder</title>
+</head>
+<body>
+<h2>Record Your Voice (Distant Effect)</h2>
+<button id="startBtn">Start Recording</button>
+<button id="stopBtn" disabled>Stop Recording</button>
+<audio id="audioPlayback" controls></audio>
+<br>
+<a id="downloadLink" download="distant_voice.wav">Download Processed Audio</a>
+
+<script>
+let mediaRecorder;
+let audioChunks = [];
+let audioContext;
+let recordedBuffer;
+
+const startBtn = document.getElementById("startBtn");
+const stopBtn = document.getElementById("stopBtn");
+const audioPlayback = document.getElementById("audioPlayback");
+const downloadLink = document.getElementById("downloadLink");
+
+startBtn.onclick = async () => {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    mediaRecorder = new MediaRecorder(stream);
+    audioChunks = [];
+    mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+    mediaRecorder.start();
+    startBtn.disabled = true;
+    stopBtn.disabled = false;
+};
+
+stopBtn.onclick = async () => {
+    mediaRecorder.onstop = async () => {
+        const blob = new Blob(audioChunks, { type: 'audio/webm' });
+        const arrayBuffer = await blob.arrayBuffer();
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const buffer = await audioContext.decodeAudioData(arrayBuffer);
+        const processedBuffer = applyDistantEffect(buffer);
+
+        // Convert processed buffer to WAV
+        const wavBlob = bufferToWav(processedBuffer);
+        const url = URL.createObjectURL(wavBlob);
+        audioPlayback.src = url;
+        downloadLink.href = url;
+    };
+    mediaRecorder.stop();
+    startBtn.disabled = false;
+    stopBtn.disabled = true;
+};
+
+// Apply "distant" effect
+function applyDistantEffect(buffer) {
+    const numChannels = buffer.numberOfChannels;
+    const length = buffer.length;
+    const sampleRate = buffer.sampleRate;
+    const newBuffer = audioContext.createBuffer(numChannels, length, sampleRate);
+
+    for (let c = 0; c < numChannels; c++) {
+        const input = buffer.getChannelData(c);
+        const output = newBuffer.getChannelData(c);
+
+        for (let i = 0; i < length; i++) {
+            // Slight garble / distortion
+            let sample = Math.tanh(input[i] * 2) * 0.5;
+
+            // Add echo
+            const delaySamples = Math.floor(0.2 * sampleRate);
+            if (i >= delaySamples) {
+                sample += output[i - delaySamples] * 0.4;
+            }
+
+            // Simple low-pass (muffle)
+            if (i > 0) {
+                sample = 0.7 * sample + 0.3 * output[i - 1];
+            }
+
+            output[i] = sample;
+        }
+
+        // Normalize
+        const max = Math.max(...output.map(x => Math.abs(x)));
+        for (let i = 0; i < output.length; i++) output[i] /= max + 1e-8;
+    }
+    return newBuffer;
+}
+
+// Convert AudioBuffer to WAV Blob
+function bufferToWav(buffer) {
+    const numChannels = buffer.numberOfChannels;
+    const length = buffer.length * numChannels * 2;
+    const arrayBuffer = new ArrayBuffer(44 + length);
+    const view = new DataView(arrayBuffer);
+
+    function writeString(view, offset, string) {
+        for (let i = 0; i < string.length; i++) {
+            view.setUint8(offset + i, string.charCodeAt(i));
+        }
+    }
+
+    let offset = 0;
+    writeString(view, offset, 'RIFF'); offset += 4;
+    view.setUint32(offset, 36 + length, true); offset += 4;
+    writeString(view, offset, 'WAVE'); offset += 4;
+    writeString(view, offset, 'fmt '); offset += 4;
+    view.setUint32(offset, 16, true); offset += 4; // PCM
+    view.setUint16(offset, 1, true); offset += 2; // PCM format
+    view.setUint16(offset, numChannels, true); offset += 2;
+    view.setUint32(offset, buffer.sampleRate, true); offset += 4;
+    view.setUint32(offset, buffer.sampleRate * numChannels * 2, true); offset += 4;
+    view.setUint16(offset, numChannels * 2, true); offset += 2;
+    view.setUint16(offset, 16, true); offset += 2;
+    writeString(view, offset, 'data'); offset += 4;
+    view.setUint32(offset, length, true); offset += 4;
+
+    for (let i = 0; i < buffer.length; i++) {
+        for (let c = 0; c < numChannels; c++) {
+            let sample = buffer.getChannelData(c)[i];
+            sample = Math.max(-1, Math.min(1, sample));
+            view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7FFF, true);
+            offset += 2;
+        }
+    }
+
+    return new Blob([arrayBuffer], { type: 'audio/wav' });
+}
+</script>
+</body>
+</html>
